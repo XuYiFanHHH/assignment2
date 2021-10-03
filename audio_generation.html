@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html>
+	<head>
+        <meta charset="utf-8" />
+        <title>Audio Modulator</title>
+        <link href="https://unpkg.com/video.js/dist/video-js.css" rel="stylesheet">
+	</head>
+	<body>		
+        <h1>Audio Modulator</h1>
+        <h2>Please input a string of numbers</h2>
+        <input type="text" id="inputbox" oninput="value=value.replace(/[^\d]/g,'')">
+        <button id = 'bt'>Generate the audio</button>
+        <p id = 'p1'></p>
+        <p id = 'p2'></p>
+        <h3 id = 'h1'></h3>
+        <h3 id = 'h2'></h3>
+
+		<script>
+            // A function for concating Float32Array
+            Float32Array.prototype.concat = function() {
+                var bytesPerIndex = 4,
+                    buffers = Array.prototype.slice.call(arguments);
+
+                // add self
+                buffers.unshift(this);
+
+                buffers = buffers.map(function(item) {
+                    if (item instanceof Float32Array) {
+                        return item.buffer;
+                    } else if (item instanceof ArrayBuffer) {
+                        if (item.byteLength / bytesPerIndex % 1 !== 0) {
+                            throw new Error('One of the ArrayBuffers is not from a Float32Array');
+                        }
+                        return item;
+                    } else {
+                        throw new Error('You can only concat Float32Array, or ArrayBuffers');
+                    }
+                });
+
+                var concatenatedByteLength = buffers
+                    .map(function(a) {
+                        return a.byteLength;
+                    })
+                    .reduce(function(a, b) {
+                        return a + b;
+                    }, 0);
+
+                var concatenatedArray = new Float32Array(concatenatedByteLength / bytesPerIndex);
+
+                var offset = 0;
+                buffers.forEach(function(buffer, index) {
+                    concatenatedArray.set(new Float32Array(buffer), offset);
+                    offset += buffer.byteLength / bytesPerIndex;
+                });
+
+                return concatenatedArray;
+            };
+
+            const bt = document.getElementById('bt');
+            const box = document.getElementById('inputbox');
+            const p1 = document.getElementById('p1');
+            const p2 = document.getElementById('p2');
+            const h1 = document.getElementById('h1');
+            const h2 = document.getElementById('h2');
+            const SF = 7;
+            const BW = 2000;
+            const SAMPLE_RATE = 48000;
+            const CARRIER_F = 18000;			
+            const PRE_CHECK_NUM = 10;
+			const SFD_CHECK_NUM = 2.25;
+
+            const T = Math.pow(2,SF)/BW; // Duration of each chirp (s)
+            const CHIRP_LEN = SAMPLE_RATE * T; // Sample number of each chirp
+
+            let down_chirp = new Float32Array(CHIRP_LEN);
+			let up_chirp = new Float32Array(CHIRP_LEN);
+            let zeros = new Float32Array(CHIRP_LEN*2);
+            for(i = 0; i < zeros.length; i++)
+            {
+                zeros[i] = 0;
+            }
+            for(i = 0; i < down_chirp.length; i++)
+			{
+				let t = i / SAMPLE_RATE;
+				down_chirp[i] = Math.sin(2*Math.PI*(CARRIER_F + BW - BW*t/2/T)*t);
+				up_chirp[i] = Math.sin(2*Math.PI*(CARRIER_F + BW*t/2/T)*t)
+			}
+            let baseline = up_chirp.concat(up_chirp);
+            let packet = zeros;
+            for(i = 0; i < PRE_CHECK_NUM; i++)
+            {
+                packet = packet.concat(up_chirp);
+            }
+            for(i = 0; i < SFD_CHECK_NUM-1; i++)
+            {
+                packet = packet.concat(down_chirp);
+            }
+            packet_fomer = packet.concat(down_chirp.slice(0,CHIRP_LEN/4));
+
+            let AudioContext = window.AudioContext || window.webkitAudioContext;
+            let audioCtx;
+
+            bt.onclick = function(){
+                if(!audioCtx) {
+                    audioCtx = new AudioContext();
+                }
+                packet = packet_fomer;
+                h1.innerHTML = '';
+                h2.innerHTML = '';
+
+                str = box.value.split('');
+                data_array = str.map(Number);
+                for (const data of data_array)
+                {
+                    let offset = Math.round(data/Math.pow(2,SF)*CHIRP_LEN);
+                    let sig = baseline.slice(offset, offset+CHIRP_LEN);
+                    packet = packet.concat(sig);
+                }
+                p1.innerHTML = 'The string contains ' + box.value.length.toString() + ' numbers.';
+                p2.innerHTML = 'The packet lasts ' + (packet.length/SAMPLE_RATE).toString() + ' seconds.';
+                
+                // Create an empty stereo buffer
+                let frameCount = packet.length;
+                let myArrayBuffer = audioCtx.createBuffer(1, frameCount, SAMPLE_RATE);
+
+                // Fill the buffer with packet samples
+                let nowBuffering = myArrayBuffer.getChannelData(0);
+                for (let i = 0; i < frameCount; i++) {
+                    nowBuffering[i] = packet[i];
+                }
+
+                let source = audioCtx.createBufferSource();
+                source.buffer = myArrayBuffer;
+                source.connect(audioCtx.destination);
+                source.start();
+                h1.innerHTML = 'The packet is being sent';
+
+                source.onended = () => {
+                    h2.innerHTML = 'Transmission finished!';
+                }
+            }
+            
+		</script>
+	</body>
+</html>
